@@ -37,10 +37,10 @@
             this.dataCache = {};
 
             var lpn = location.pathname;
-            //lpn = "/_fork";
             switch (lpn) {
                 //fork
                 case "/_fork":
+                    this.nr = uuid.defaultRepos;
                     this.forkList();
                     break;
                 default:
