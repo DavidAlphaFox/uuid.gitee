@@ -35,7 +35,7 @@
             this.dataCache = {};
 
             //token
-            this.token = localStorage.getItem("uuid_token");
+            this.token = localStorage.getItem("uuid-token");
 
             var lpn = location.pathname;
             switch (lpn) {
@@ -60,8 +60,6 @@
                     this.nr = this.name + "/" + this.repos;
 
                     this.info();
-
-                    this.build();
             }
 
             this.jump();
@@ -87,7 +85,41 @@
                     src = "https://gitee.com/api/v5/repos" + uuid.defaultRepos;
                     break;
             }
-            uuid.fetch(this, src, callback, 'json', function () {
+
+            var cacheRepos = uuid.cacheGet(that.name, src);
+            uuid.fetch(this, src, function (data) {
+                //仓库未更新
+                var nochange = cacheRepos.ok && cacheRepos.value.updated_at == data.updated_at;
+                var udata = localStorage.getItem("uuid_" + that.name);
+                if (udata && udata != "") {
+                    var ujson = JSON.parse(udata);
+                    for (var i in ujson) {
+                        if (i.indexOf("__create_time__") == 0) {
+                            if (i.indexOf("/contents/") >= 0 || i.indexOf("/git/trees/master?recursive=1") >= 0) {
+                                //未更新，延长缓存过期；已更新，设置超出缓存时间
+                                ujson[i] = nochange ? new Date().valueOf() : 946656000000;
+                            }
+                        }
+                    }
+                    localStorage.setItem("uuid_" + that.name, JSON.stringify(ujson));
+                }
+
+                if (nochange) {
+                    var udata = localStorage.getItem("uuid_" + that.name);
+                    if (udata && udata != "") {
+                        var ujson = JSON.parse(udata);
+                        for (var i in ujson) {
+                            if (i.indexOf("__create_time__") == 0) {
+                                if (i.indexOf("/contents/") >= 0 || i.indexOf("/git/trees/master?recursive=1") >= 0) {
+                                    ujson[i] = new Date().valueOf();
+                                }
+                            }
+                        }
+                        localStorage.setItem("uuid_" + that.name, JSON.stringify(ujson));
+                    }
+                }
+                callback(data);
+            }, 'json', function () {
                 that.showMessage("Not found");
             })
         },
@@ -194,7 +226,8 @@
                 //token按钮
                 var btn = document.createElement('a');
                 btn.href = location.origin + "/_token";
-                btn.className = "badge badge-dark float-right mr-2";
+                btn.className = "badge badge-" + (that.token ? "success" : "dark") + " float-right mr-2";
+                btn.title = that.token ? "已设置token" : "未设置token，访问速率受限制";
                 btn.style.fontSize = "1rem";
                 btn.innerHTML = 'token';
                 ind.insertBefore(btn, ind.firstChild);
@@ -208,13 +241,22 @@
                     btn.innerHTML = 'Fork &nbsp;' + data.forks_count;
                     ind.insertBefore(btn, ind.firstChild);
                 })
+
+                that.build();
             })
         },
         //搜索
         search: function () {
             var that = this;
+            var ig = document.createElement('div');
+            ig.className = "input-group mt-2";
+            ig.style.width = "55%";
+            ig.innerHTML = '<div class="input-group-prepend">'
+                + '<select class="custom-select custom-select-sm" style="width:120px;" id="seGroup">'
+                + '<option value="">全部</option>'
+                + '</select>';
             var sh = document.createElement("input");
-            sh.className = "form-control form-control-sm mt-2";
+            sh.className = "form-control form-control-sm";
             sh.style.width = "55%";
             sh.placeholder = "搜索，支持静默搜索";
             sh.oninput = function () {
@@ -235,7 +277,22 @@
                 }
             }
             sh.title = "静默搜索，支持快捷方式：Esc、↑、↓、Enter，可直达网址";
-            that.id.firstChild.appendChild(sh);
+
+            ig.appendChild(sh)
+            that.id.firstChild.appendChild(ig);
+
+            //分类选择
+            document.getElementById('seGroup').onchange = function () {
+                var cards = document.querySelectorAll('.card');
+                for (var i = 0; i < cards.length; i++) {
+                    var ci = cards[i];
+                    var type = ci.children[0].children[0].innerHTML;
+                    ci.className = ci.className.replace(" d-none", "");
+                    if (this.value != "" && this.value != type) {
+                        ci.className += " d-none";
+                    }
+                }
+            }
         },
         //跳转
         jump: function () {
@@ -290,16 +347,18 @@
                         case 38:
                         //down
                         case 40:
-                            var ali = that.jumpnode.getElementsByClassName('active')[0];
-                            if (ali) {
-                                var newli;
-                                e.keyCode == 38 && (newli = ali.previousSibling);
-                                e.keyCode == 40 && (newli = ali.nextSibling);
-                                if (newli) {
-                                    newli.className = "active";
-                                    ali.className = "";
+                            if (that.jumpnode) {
+                                var ali = that.jumpnode.getElementsByClassName('active')[0];
+                                if (ali) {
+                                    var newli;
+                                    e.keyCode == 38 && (newli = ali.previousSibling);
+                                    e.keyCode == 40 && (newli = ali.nextSibling);
+                                    if (newli) {
+                                        newli.className = "active";
+                                        ali.className = "";
+                                    }
+                                    uuid.stopDefault(e);
                                 }
-                                uuid.stopDefault(e);
                             }
                             break;
                     }
@@ -365,6 +424,9 @@
                 that.jumpnode.innerHTML = "";
             }
         },
+        se: function (s) {
+            return s.replace(/"/g, "&quot;").replace(/'/g, "");
+        },
         //构建
         build: function () {
             var that = this;
@@ -426,6 +488,10 @@
                             card.innerHTML = cardhtml.join('');
                             //显示卡片
                             that.id.appendChild(card);
+                            //卡片追加到选择框
+                            var seg = document.getElementById('seGroup');
+
+                            seg.add(new Option(type));
 
                             //加载卡片下的链接，一个卡片对应一个文件
                             uuid.fetch(that, filesrc, function (data) {
@@ -438,9 +504,17 @@
                                     //满足Markdown的链接格式，有效行
                                     if (/\[.*?\]\(http.*?\)/.test(line)) {
                                         //A标签显示的文本、图标、链接
-                                        var atext, aicon, ahref;
+                                        var atext, aicon, ahref, atitle = '';
                                         line.replace(/\(http.*?\)/, function (x) {
-                                            ahref = x.substring(1, x.length - 1).trim();
+                                            if (/\(http.*?\ /.test(x)) {
+                                                line.replace(/\(http.*?\ /, function (y) {
+                                                    ahref = y.substring(1).trim();
+                                                    atitle = x.replace(y, "");
+                                                    atitle = atitle.substring(1, atitle.length - 2).trim();
+                                                })
+                                            } else {
+                                                ahref = x.substring(1, x.length - 1).trim();
+                                            }
                                         })
                                         line.replace(/\[.*?\]/, function (x) {
                                             atext = x.substring(1, x.length - 1).trim();
@@ -453,7 +527,7 @@
                                             var hrefs = ahref.split('/');
                                             aicon = hrefs[0] + "//" + hrefs[2] + "/favicon.ico";
                                         }
-                                        ahtm.push('<a href="' + ahref + '"><img data-src="' + aicon + '" src="' + uuid.defaultFavicon + '"/> ' + atext + '</a>');
+                                        ahtm.push('<a href="' + ahref + '" title="' + that.se(atitle) + '"><img data-src="' + aicon + '" src="' + uuid.defaultFavicon + '"/> ' + atext + '</a>');
                                     }
                                 })
                                 card.lastChild.innerHTML = ahtm.join('');
@@ -512,7 +586,7 @@
                 '匿名访问有速率限制（GitHub每小时60次）</br>',
                 '如果超出限制会返回 <code>403</code> 错误</br>',
                 '需要设置令牌（Personal access tokens）</br>',
-                '创建一个命名为 <code>uuid</code> 的 <code>空令牌</code> （不用勾选任何项）</br>',
+                '创建一个命名为 <code>empty</code> 的 <code>空令牌</code> （不用勾选任何项）</br>',
                 '链接：<a href="https://github.com/settings/tokens">https://github.com/settings/tokens</a>',
                 '</div>'
             ];
@@ -521,9 +595,9 @@
             var inp = dr.getElementsByTagName('input')[0];
             inp.oninput = function () {
                 if (this.value.length == 40) {
-                    localStorage.setItem("uuid_token", this.value);
+                    localStorage.setItem("uuid-token", this.value);
                 } else {
-                    localStorage.removeItem("uuid_token");
+                    localStorage.removeItem("uuid-token");
                 }
             }
             inp.onblur = function () {
@@ -620,8 +694,8 @@
         var udata = localStorage.getItem("uuid_" + name);
         if (udata && udata != "") {
             var ujson = JSON.parse(udata);
-            //缓存30分钟
-            result.ok = new Date().valueOf() - ujson["__create_time__" + key] < 1000 * 60 * 30;
+            //缓存3天
+            result.ok = new Date().valueOf() - ujson["__create_time__" + key] < 1000 * 3600 * 24 * 3;
             //值
             result.value = ujson[key];
         }
@@ -655,7 +729,6 @@
     }
 
     /**
-     * /**
      * 请求
      * @param {any} uu uuid对象
      * @param {any} src 链接
